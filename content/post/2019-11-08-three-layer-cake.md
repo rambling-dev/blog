@@ -8,12 +8,42 @@ date: 2019-11-08
 # What is an aggregation service? 
 An aggregation service is generally a restful webservice that aggregates across multiple micro services. 
 When to use? 
-Imagine you work at an e-commerce that is revamping the products section of its website. Your company has also adopted micro services, and the requirements state the product page needs bits of catalog, inventory, and pricing data. Since, your company definitely has domain bounded services you need fetch data from at least 3  domains. This is when the aggregation service is useful. It can also be described as an orchestration service.
-
-
+Imagine you work at an e-commerce that is revamping the products section of its website. 
+The requirements state the product page needs bits of catalog, inventory, and pricing data. The data is spread across three domain bounded micro-services.
+This is when the aggregation service is useful. It can also be described as an orchestration service.
 
 ## Breaking down the three layer cake
-The three layer cake can be broken down into controllers, services, and repositories. Spring also conveniently provides annotations to represent each layer.
+The three layer cake can be broken down into controllers, services, and repositories.
+A core goal is to support changes to the external layers without changing the business logic of of the application. 
+The controller should fully encapsulate the externally exposed api while the applications external downstream apis are encapsulated in repositories. 
+The service layer **Always** only uses internal data types. The service should **never** be exposed to the type of the HTTP response body or the types of the external data sources. 
+The example code uses Java and Spring but the concepts applies to other languages and frameworks.
+There will be a future post on how to use Spring to handle cross cutting concerns such as authentication, bean validation, configuration, error handling and logging. 
+
+{{<mermaid>}}
+sequenceDiagram
+    participant consumer
+    participant ProductsController
+    participant ProductService
+    participant InventoryFacade
+    participant CatalogRepository
+    participant PricingRepository
+    participant InventoryRepository
+    participant LegacyInventoryRepository
+    consumer->>ProductsController: GET /v2/products/{upc}
+    ProductsController->>ProductService: get Product for ProductRequest
+    ProductService-xCatalogRepository: fetch data
+    ProductService-xPricingRepository: fetch data
+    ProductService-xInventoryFacade: fetch data from multiple sources
+    InventoryFacade-xInventoryRepository: fetch data
+    InventoryFacade-xLegacyInventoryRepository: fetch data
+    InventoryFacade-xProductService: ProductInventoryData
+    CatalogRepository-xProductService: ProductCatalogData
+    PricingRepository-xProductService: ProductPricingData
+    Note over ProductService: create Product from ProductCatalogData, ProductPricingData, and InventoryFacade
+    ProductService->>ProductsController: Product
+    ProductsController->>consumer: HTTP status 200, body Product resource in v2 format 
+{{< /mermaid >}}
 
 #### package structure
 ```
@@ -21,7 +51,7 @@ The three layer cake can be broken down into controllers, services, and reposito
     └── rambling
         └── threelayercake
             ├── controllers
-            ├── logic
+            ├── services
             ├── model
             ├── repositories
             └── util
@@ -41,6 +71,11 @@ The three layer cake can be broken down into controllers, services, and reposito
 │   │   ├── ProductController.java
 │   │   ├── ProductControllerRequestValidator.java
 │   │   ├── ProductRequestTransformer.java
+│   │   ├── ProductResponseTransformer.java
+│   │   └── model
+│   │       ├── ProductRequest.java
+│   │       ├── ProductResponseV1.java
+│   │       └── ProductResponseV2.java
 ```
 #### example 
 ``` java
@@ -50,19 +85,21 @@ The three layer cake can be broken down into controllers, services, and reposito
      * <p> Use /v2/products/{upc} instead
      */
     @GetMapping("/v1/productByUpc")
-    public ResponseEntity<Product> nonRestfulProducts(@RequestBody ProductRequestContext productRequest) {
+    public ResponseEntity<ProductResponseV1> nonRestfulProducts(@RequestBody ProductRequest productRequest) {
         productControllerRequestValidator.validateUpc(productRequest);
-        Product product = productService.findByUpc(productRequest);
+        ProductRequestContext productRequestContext = productRequestTransfomer.transform(productRequest);
+        Product product = productService.findByUpc(productRequestContext);
         return ResponseEntity.ok(product);
     }
 
     @GetMapping("/v2/products/{upc}")
-    public ResponseEntity<Product> product(@PathVariable("upc") String upc,
+    public ResponseEntity<ProductResponseV2> product(@PathVariable("upc") String upc,
                                            @RequestParam("requestedFields") String[] requestedFields,
                                            @RequestParam("sellingLocationIds") String[] sellingLocationIds) {
         ProductRequestContext productRequest = productRequestTransfomer.transform(upc, requestedFields, sellingLocationIds);
         productControllerRequestValidator.validateUpc(productRequest);
         return productService.findByUpc(productRequest)
+                .map(ProductResponseTransformer::v2)
                 .ifPresentOrElse(ResponseEntity::ok, ResponseEntity::notFound);
     }
 
@@ -75,17 +112,8 @@ The three layer cake can be broken down into controllers, services, and reposito
     public ResponseEntity<?> handleException(AppException e) {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new AppError(e));
     }
-``` 
+```
 
-#### structure
-```
-            │   ├── product
-            │   │   ├── ProductController.java
-            │   │   ├── ProductControllerRequestValidator.java
-            │   │   ├── ProductRequestTransformer.java
-            │   │   └── model
-            │   │       └── ProductRequestContext.java
-```
 ### Services
 #### Responsibilities
 - Coordinate between repositories. 
@@ -93,7 +121,23 @@ The three layer cake can be broken down into controllers, services, and reposito
 - Delegate to a facade when there are multiple repositories that make up a single domain
 - Invoke a creator/transform to get target object after the required data is retrieved
 
-#### example generic service
+#### structure
+```
+├── services
+│   └── product
+│       ├── InventoryFacade.java
+│       ├── ProductCreator.java
+│       └── ProductService.java
+├── model
+│   ├── product
+│   │   ├── Product.java
+│   │   ├── ProductRequestContext.java
+│   │   ├── ProductCatalogData.java
+│   │   ├── ProductPricingData.java
+│   │   └── ProductInventoryData.java
+```
+
+#### example product service
 ``` java
     @Autowired
     public ProductService(final CatalogRepository catalogRepository,
@@ -110,12 +154,12 @@ The three layer cake can be broken down into controllers, services, and reposito
     public Optional<Product> findByUpc(final ProductRequestContext requestContext) {
         ProductCatalogData productCatalogData = catalogRepository.fetchProductInfo(requestContext.getUpc());
         ProductPricingData productPricingData = pricingRepository.fetchPricing(requestContext.getUpc());
-        int availableQuantity = inventoryFacade.determineInventory(requestContext.getUpc());
-        return productCreator.create(requestContext, productCatalogData, productPricingData, availableQuantity);
+        ProductInventoryData productInventoryData = inventoryFacade.determineInventory(requestContext.getUpc());
+        return productCreator.create(requestContext, productCatalogData, productPricingData, productInventoryData);
     }
 ```
 
-#### example facade
+#### example inventory facade
 ```java
     @Autowired
     public InventoryFacade(final InventoryRepository inventoryRepository,
@@ -125,7 +169,7 @@ The three layer cake can be broken down into controllers, services, and reposito
     }
 
     // todo implement circuit breaker with resilience4j
-    public int determineInventory(String upc){
+    public ProductInventoryData determineInventory(String upc){
         try {
             return inventoryRepository.fetchProductInfo(upc);
         } catch (RepositoryException e){
@@ -134,27 +178,24 @@ The three layer cake can be broken down into controllers, services, and reposito
     }
 ```
 
-#### structure
-```
-            ├── logic
-            │   └── product
-            │       ├── InventoryFacade.java
-            │       ├── ProductCreator.java
-            │       └── ProductService.java
-            ├── model
-            │   ├── product
-            │   │   ├── Product.java
-            │   │   ├── ProductRequestContext.java
-            │   │   ├── ProductCatalogData.java
-            │   │   ├── ProductPricingData.java
-            │   │   └── ProductData.java
-```
 
 ### Repositories
 #### Responsibilities
 - convert to external model
 - invoke external http api/jdbc/grpc/queue/etc
 - convert back to internal model
+
+#### structure
+```
+│   ├── catalog
+│   │   ├── CatalogAuthInterceptor.java
+│   │   ├── CatalogConfiguration.java
+│   │   ├── CatalogRepository.java
+│   │   ├── CatalogTransformer.java
+│   │   └── model
+│   │       └── CatalogResponse.java
+```
+
 
 #### example repository with caching
 ```java
@@ -176,13 +217,3 @@ The three layer cake can be broken down into controllers, services, and reposito
     }
 ```
 
-#### structure
-```
-            │   ├── catalog
-            │   │   ├── CatalogAuthInterceptor.java
-            │   │   ├── CatalogConfiguration.java
-            │   │   ├── CatalogRepository.java
-            │   │   ├── CatalogTransformer.java
-            │   │   └── model
-            │   │       └── CatalogResponse.java
-```
