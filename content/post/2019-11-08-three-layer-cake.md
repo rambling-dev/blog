@@ -1,7 +1,7 @@
 ---
 title: Three Layer Cake
 subtitle: "A maintainable architecture for an aggregation service"
-tags: ["micro-services", "spring-boot", "design-patterns']
+tags: ["micro-services", "spring-boot", "design-patterns"]
 date: 2019-11-16
 ---
 
