@@ -6,7 +6,7 @@ date: 2019-11-08
 ---
 
 # What is an aggregation service? 
-An aggregation service is generally a restful web service that aggregates across multiple micro-services. 
+An aggregation service is generally a RESTful web service that aggregates across multiple micro-services. 
 It has a broader definition as described in [Enterprise Integration Patterns](https://camel.apache.org/manual/latest/aggregate-eip.html)
 but I am going to focus on using it in a micro-service context.
 ![Aggregator EIP](/aggregator_eip_pattern.png)
@@ -126,10 +126,12 @@ Lets take a dive into in each layer...
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new AppError(e));
     }
 ```
-The inclusion of multiple versions in the example was not an accident. It is essential to think about how the application structure will handle change over time because it will change. The original other was still learning about REST and how to structure an api and
-eventually saw a better way. This better way required breaking api changes, and the api consumers needed a gradual migration path.
-The use of `ProductRequestContext productRequest = productRequestTransfomer.transform(upc, requestedFields, sellingLocationIds)` allows the consumers to choose which format they need and the developers only need to support one model. Originally, the v1 `ProductRequest`
-object was passed into the service. Once the need for v2 came, the broken encapsulation was refactored to ensure changes to one layer do not affect the others.
+The inclusion of multiple versions in the example was not an accident. It is essential to think about how the application structure will handle change over time because it will change. 
+The original author was still learning about REST and how to structure an api and eventually saw a better way. 
+This better way required breaking api changes, and the api consumers needed a gradual migration path.
+The use of `ProductRequestContext productRequest = productRequestTransfomer.transform(upc, requestedFields, sellingLocationIds)` allows the consumers to choose which format they need and the developers only need to support one model. 
+Originally, the v1 `ProductRequest` object was passed into the service. 
+Once the need for v2 came, the broken encapsulation was refactored to ensure changes to one layer do not affect the others.
 
 ### Services
 #### Responsibilities
@@ -224,12 +226,12 @@ of the primary service low and easily testable. The Facade pattern is not new an
                              final RestTemplate catalogRestTemplate,
                              final CatalogTransformer catalogTransformer) {
         this.catalogConfiguration = catalogConfiguration;
-        this.catalogResttemplate = catalogResttemplate;
+        this.catalogResttemplate = catalogRestTemplate;
         this.catalogTransformer = catalogTransformer;
     }
 
     public ProductCatalogData fetchProductInfo(String upc){
-        CatalogResponse catalogResponse = catalogResttemplate.getForEntity(
+        CatalogResponse catalogResponse = catalogRestTemplate.getForEntity(
             catalogConfiguration.getUrl, CatalogResponse.class, upc
         ).getBody();
         return catalogTransformer.transform(catalogResponse);
