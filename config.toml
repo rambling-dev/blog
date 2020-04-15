@@ -1,4 +1,4 @@
-baseurl = "https://rambling-dev.gitlab.io/blog"
+baseurl = "https://blog.rambling.dev/"
 contentdir    = "content"
 layoutdir     = "layouts"
 publishdir    = "public"
@@ -26,16 +26,14 @@ pygmentCodeFences = true
 [Author]
   name = "Rambling Dev"
   email = "ramblingdev@gmail.com"
-  facebook = "username"
   gitlab = "rambling-dev"
   github = "rambling-dev"
-  twitter = "username"
-  linkedin = "username"
-  stackoverflow = "users/XXXXXXX/username"
+  twitter = "rambling-dev"
+  stackoverflow = "users/XXXXXXX/rambling_dev"
 
 [[menu.main]]
     name = "Blog"
-    url = ""
+    url = "https://blog.rambling.dev"
     weight = 1
 
 [[menu.main]]
